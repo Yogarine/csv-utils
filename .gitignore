@@ -5,8 +5,6 @@
 !/.idea/codeStyles
 !/.idea/dictionaries
 !/.idea/inspectionProfiles
-!/.idea/encodings.xml
-!/.idea/modules.xml
-!/.idea/csv-utils.iml
-!/.idea/php.xml
-!/.idea/vcs.xml
+
+/composer.lock
+/vendor
