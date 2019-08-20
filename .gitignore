@@ -6,5 +6,7 @@
 !/.idea/dictionaries
 !/.idea/inspectionProfiles
 
+.phpunit.result.cache
+
 /composer.lock
 /vendor

@@ -5,6 +5,7 @@
         <option name="USE_TAB_CHARACTER" value="true" />
       </value>
     </option>
+    <option name="RIGHT_MARGIN" value="80" />
     <HTMLCodeStyleSettings>
       <option name="HTML_KEEP_LINE_BREAKS" value="false" />
       <option name="HTML_KEEP_LINE_BREAKS_IN_TEXT" value="false" />

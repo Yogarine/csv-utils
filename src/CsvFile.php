@@ -5,6 +5,8 @@ namespace Yogarine\CsvUtils;
 use Countable;
 use Exception;
 use Iterator;
+use OutOfBoundsException;
+use SeekableIterator;
 
 /**
  * Wrapper class for CSV files. Uses fgetcsv().
@@ -13,11 +15,12 @@ use Iterator;
  * files as big as you can make them. Implements Iterator so you can use
  * foreach() to iterate through the entries in a CSV file.
  *
- * @todo   Implement SeekableIterator correctly
  * @author Alwin Garside <alwin@garsi.de>
  */
-class CsvFile implements Iterator, Countable
+class CsvFile implements Iterator, Countable, SeekableIterator
 {
+    const HEADER_ROW_NONE = -1;
+
     /**
      * Headers of the CSV file.
      *
@@ -37,14 +40,14 @@ class CsvFile implements Iterator, Countable
      *
      * @var int
      */
-    protected $_position = 0;
+    protected $position = 0;
 
     /**
      * Number of rows.
      *
      * @var int
      */
-    protected $_count = 0;
+    protected $count = 0;
 
     /**
      * The row at which the header is located.
@@ -53,41 +56,46 @@ class CsvFile implements Iterator, Countable
      *
      * @var int
      */
-    protected $_headerRow = -1;
+    protected $headerRow = -1;
 
     /**
      * The field delimiter (one character only).
      *
      * @var string
      */
-    protected $_delimiter = ',';
+    protected $delimiter = ',';
 
     /**
      * The field enclosure character (one character only).
      *
      * @var string
      */
-    protected $_enclosure = '"';
+    protected $enclosure = '"';
 
     /**
      * The escape character (one character only).
      *
      * @var string
      */
-    protected $_escape = '\\';
+    protected $escape = '\\';
+
+    /**
+     * @var int
+     */
+    protected $contentOffset = 0;
 
     /**
      * Must be greater than the longest line (in characters) to be found in
      * the CSV file (allowing for trailing line-end characters).
      *
-     * @var int[]
+     * @var int
      */
-    protected $_maxLineLength;
+    protected $maxLineLength = 0;
 
     /**
      * File pointer for the CSV file.
      */
-    protected $_handle;
+    protected $handle;
 
     /**
      * Position that fgetcsv is currently at.
@@ -97,7 +105,12 @@ class CsvFile implements Iterator, Countable
      *
      * @var int
      */
-    protected $_fgetcsvPosition = 0;
+    protected $fgetcsvPosition = 0;
+
+    /**
+     * @var
+     */
+    protected $current = null;
 
     /**
      * Creates a new CsvFile instance.
@@ -126,57 +139,68 @@ class CsvFile implements Iterator, Countable
         $enclosure = '"',
         $escape = '\\'
     ) {
-        $this->filename   = $filename;
-        $this->_headerRow = $headerRow;
-        $this->_delimiter = $delimiter;
-        $this->_enclosure = $enclosure;
-        $this->_escape    = $escape;
+        $this->filename  = $filename;
+        $this->headerRow = $headerRow;
+        $this->delimiter = $delimiter;
+        $this->enclosure = $enclosure;
+        $this->escape    = $escape;
 
-        $this->_handle = fopen($this->filename, 'r');
-        if (! $this->_handle) {
+        $this->handle = fopen($this->filename, 'r');
+        if (! $this->handle) {
             throw new Exception("Unable to open file '{$this->filename}'");
         }
 
-        fseek($this->_handle, 0);
+        // Skip the header rows.
+        for ($row = 0; $row <= $this->headerRow; $row++) {
+            if ($row == $this->headerRow) {
+                $this->headers = fgetcsv(
+                    $this->handle,
+                    0,
+                    $this->delimiter,
+                    $this->enclosure,
+                    $this->escape
+                );
+            } else {
+                fgets($this->handle);
+            }
+        }
+
+        $this->contentOffset = ftell($this->handle);
+
+        // Resolve all duplicates in headers.
+        if ($this->headers) {
+            $headerKeys = array();
+            foreach ($this->headers as $key => $header) {
+                if (isset($headerKeys[$header])) {
+                    $headerKeys[$header][] = $key;
+                } else {
+                    $headerKeys[$header] = array($key);
+                }
+            }
+
+            foreach ($headerKeys as $header => $keys) {
+                if (count($keys) > 1) {
+                    $i = 0;
+                    foreach ($keys as $key) {
+                        $this->headers[$key] = rtrim($this->headers[$key]) . $i++;
+                    }
+                }
+            }
+        }
 
         // Get the max line length for better performance when iterating.
-        $this->_maxLineLength = 0;
-        $row                  = 0;
-        while (false !== ($rowData = fgets($this->_handle))) {
-            if ($row > $this->_headerRow) {
-                $this->_count++;
-                $lineLength = strlen($rowData);
-                if ($lineLength > $this->_maxLineLength) {
-                    $this->_maxLineLength = $lineLength;
-                }
-            }
-            $row++;
-        }
-
-        $this->rewind();
-    }
-
-    /**
-     * Makes sure there are no duplicate headers.
-     */
-    protected function _checkHeaders()
-    {
-        $headerKeys = array();
-        foreach ($this->headers as $key => $header) {
-            if (! isset($headerKeys[$header])) {
-                $headerKeys[$header] = array();
-            }
-            $headerKeys[$header][] = $key;
-        }
-
-        foreach ($headerKeys as $header => $keys) {
-            if (count($keys) > 1) {
-                $i = 0;
-                foreach ($keys as $key) {
-                    $this->headers[$key] = rtrim($this->headers[$key]) . $i++;
-                }
+        while (false !== ($rowData = fgets($this->handle))) {
+            $this->count++;
+            $lineLength = strlen($rowData);
+            if ($lineLength > $this->maxLineLength) {
+                $this->maxLineLength = $lineLength;
             }
         }
+
+        // Add margin for trailing line-end characters.
+        $this->maxLineLength += 2;
+
+        fseek($this->handle, $this->contentOffset);
     }
 
     /**
@@ -186,118 +210,162 @@ class CsvFile implements Iterator, Countable
      */
     public function __destruct()
     {
-        fclose($this->_handle);
+        fclose($this->handle);
     }
 
     /**
-     * Rewinds this Iterator to the first row after the headers.
-     */
-    public function rewind()
-    {
-        fseek($this->_handle, 0);
-        for ($row = 0; $row <= $this->_headerRow; $row++) {
-            $this->headers = fgetcsv(
-                $this->_handle,
-                0,
-                $this->_delimiter,
-                $this->_enclosure,
-                $this->_escape
-            );
-            if (count($this->headers) > 0) {
-                $this->_checkHeaders();
-            }
-        }
-
-        $this->_position        = 0;
-        $this->_fgetcsvPosition = 0;
-    }
-
-    /**
-     * Returns the current row as an array.
+     * Return the current row as an array.
      *
-     * @return array An associative array containing the fields read. A blank
-     *               line in a CSV file will be returned as an empty array, and
-     *               will not be treated as an error.
+     * @link https://php.net/manual/en/iterator.current.php
+     *
+     * @return array|bool|null An associative array containing the fields read.
+     *                         A blank line in a CSV file will be returned as an
+     *                         empty array, and will not be treated as an error.
+     *                         Returns NULL if an invalid handle is supplied or
+     *                         FALSE on other errors, including end of file.
      */
     public function current()
     {
-        $rowData = fgetcsv(
-            $this->_handle,
-            $this->_maxLineLength,
-            $this->_delimiter,
-            $this->_enclosure,
-            $this->_escape
-        );
-        $this->_fgetcsvPosition++;
-
-        $data = array();
-        foreach ($rowData as $key => $value) {
-            if (array_key_exists($key, $this->headers)) {
-                $key = $this->headers[$key];
-            }
-            $data[$key] = $value;
+        if ($this->fgetcsvPosition != $this->position + 1) {
+            $this->current = $this->getRow($this->position);
         }
 
-        return $data;
+        return $this->current;
     }
 
     /**
-     * Return the current position.
+     * Move forward to next element.
      *
-     * i.e. the current current row minus the header row and preceding rows.
+     * @link https://php.net/manual/en/iterator.next.php
      *
-     * @return int
-     */
-    public function key()
-    {
-        return $this->_position;
-    }
-
-    /**
-     * Increment the current position.
+     * @return void Any returned value is ignored.
      */
     public function next()
     {
-        // fgetcsv() automatically goes to the next row, so we just try to
-        // handle things as nicely as possible.
-        while ($this->_fgetcsvPosition <= $this->_position) {
-            fgetcsv(
-                $this->_handle,
-                $this->_maxLineLength,
-                $this->_delimiter,
-                $this->_enclosure,
-                $this->_escape
-            );
-            $this->_fgetcsvPosition++;
-        }
-
-        $this->_position = $this->_fgetcsvPosition;
+        ++$this->position;
     }
 
     /**
-     * Check whether the current position is valid.
+     * Return the key of the current element.
      *
-     * @return boolean True iff the current position is a valid row.
+     * @link https://php.net/manual/en/iterator.key.php
+     *
+     * @return int|string|null Scalar on success, or null on failure.
+     */
+    public function key()
+    {
+        return $this->position;
+    }
+
+    /**
+     * Checks if current position is valid.
+     *
+     * @link https://php.net/manual/en/iterator.valid.php
+     *
+     * @return bool Returns true on success or false on failure.
      */
     public function valid()
     {
-        if ($this->_position > $this->_count - 1) {
-            return false;
+        if ($this->fgetcsvPosition != $this->position + 1) {
+            $this->current = $this->getRow($this->position);
         }
 
-        return true;
+        return ! (false === $this->current || null === $this->current);
     }
 
     /**
-     * Returns the number of CSV entries.
+     * Rewind the Iterator to the first element.
+     *
+     * @link https://php.net/manual/en/iterator.rewind.php
+     *
+     * @return void
+     */
+    public function rewind()
+    {
+        fseek($this->handle, $this->contentOffset);
+        $this->fgetcsvPosition = 0;
+        $this->position        = 0;
+    }
+
+    /**
+     * Count the number of CSV rows.
      *
      * i.e. the number of rows in the file minus the header row and any
      * preceding rows.
      *
-     * @return int Number of CSV entries.
+     * @link https://php.net/manual/en/countable.count.php
+     *
+     * @return int The row count as an integer.
      */
     public function count()
     {
-        return $this->_count;
+        return $this->count;
+    }
+
+    /**
+     * Seeks to a position.
+     *
+     * @link https://php.net/manual/en/seekableiterator.seek.php
+     *
+     * @param  int  $position  The position to seek to.
+     * @return void
+     */
+    public function seek($position)
+    {
+        if (false === ($row = $this->getRow($position))) {
+            throw new OutOfBoundsException(
+                "Invalid seek position ($position)"
+            );
+        }
+
+        $this->current  = $row;
+        $this->position = $position;
+    }
+
+    /**
+     * @param  int  $position
+     * @return array|false|null
+     */
+    protected function getRow($position)
+    {
+        // If we are passed our position, rewind.
+        if ($this->fgetcsvPosition > $position) {
+            fseek($this->handle, $this->contentOffset);
+            $this->fgetcsvPosition = 0;
+        }
+
+        // Fast-forward our CSV file handler to the proper offset.
+        while ($this->fgetcsvPosition < $position) {
+            fgets($this->handle);
+            $this->fgetcsvPosition++;
+        }
+
+        $rowData = fgetcsv(
+            $this->handle,
+            $this->maxLineLength,
+            $this->delimiter,
+            $this->enclosure,
+            $this->escape
+        );
+        $this->fgetcsvPosition++;
+
+        if (false === $rowData || null === $rowData) {
+            return $rowData;
+        }
+
+        $row = array();
+        foreach ($rowData as $key => $value) {
+            if (isset($this->headers[$key])) {
+                $key = $this->headers[$key];
+            }
+            $row[$key] = $value;
+        }
+
+        // In case the count increased, update it.
+        if ($position > $this->count - 1) {
+            $this->count = $position + 1;
+        }
+
+        return $row;
     }
 }
