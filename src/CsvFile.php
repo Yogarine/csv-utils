@@ -224,6 +224,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *                         Returns NULL if an invalid handle is supplied or
      *                         FALSE on other errors, including end of file.
      */
+    #[\ReturnTypeWillChange]
     public function current()
     {
         if ($this->fgetcsvPosition != $this->position + 1) {
@@ -240,6 +241,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *
      * @return void Any returned value is ignored.
      */
+    #[\ReturnTypeWillChange]
     public function next()
     {
         ++$this->position;
@@ -252,6 +254,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *
      * @return int|string|null Scalar on success, or null on failure.
      */
+    #[\ReturnTypeWillChange]
     public function key()
     {
         return $this->position;
@@ -264,6 +267,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *
      * @return bool Returns true on success or false on failure.
      */
+    #[\ReturnTypeWillChange]
     public function valid()
     {
         if ($this->fgetcsvPosition != $this->position + 1) {
@@ -280,6 +284,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function rewind()
     {
         fseek($this->handle, $this->contentOffset);
@@ -297,6 +302,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      *
      * @return int The row count as an integer.
      */
+    #[\ReturnTypeWillChange]
     public function count()
     {
         return $this->count;
@@ -310,6 +316,7 @@ class CsvFile implements Iterator, Countable, SeekableIterator
      * @param  int  $position  The position to seek to.
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function seek($position)
     {
         if (false === ($row = $this->getRow($position))) {
